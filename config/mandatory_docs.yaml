@@ -1,0 +1,141 @@
+# Mandatory and Optional Document Requirements
+# Organized by dispute type and document category
+
+documents:
+  # Common documents across all dispute types
+  common:
+    mandatory:
+      - name: "invoice"
+        description: "Original invoice with invoice number and date"
+        validation:
+          required_fields:
+            - invoice_number
+            - invoice_date
+            - amount
+            - buyer_name
+            - seller_name
+          date_format: "YYYY-MM-DD or DD/MM/YYYY"
+      
+      - name: "msme_registration"
+        description: "Valid MSME registration certificate (Udyam/Udyog Aadhaar)"
+        validation:
+          required_fields:
+            - registration_number
+            - registration_type
+            - registration_date
+            - entity_name
+    
+    optional:
+      - name: "gst_certificate"
+        description: "GST registration certificate"
+        helpful_for: ["tax_validation", "entity_verification"]
+      
+      - name: "bank_statement"
+        description: "Bank statement showing transaction history"
+        helpful_for: ["payment_verification", "cash_flow_analysis"]
+  
+  # Documents specific to payment_delay disputes
+  payment_delay:
+    mandatory:
+      - name: "delivery_proof"
+        description: "Proof of delivery (delivery challan, signed receipt, etc.)"
+        validation:
+          required_fields:
+            - delivery_date
+            - delivery_location
+            - recipient_signature_or_acknowledgment
+    
+    optional:
+      - name: "purchase_order"
+        description: "Original purchase order or work order"
+        helpful_for: ["terms_verification", "amount_validation"]
+      
+      - name: "payment_reminders"
+        description: "Email or written reminders sent to buyer"
+        helpful_for: ["good_faith_evidence", "timeline_establishment"]
+      
+      - name: "contract_agreement"
+        description: "Original contract or agreement document"
+        helpful_for: ["terms_verification", "legal_basis"]
+  
+  # Documents specific to partial_payment disputes
+  partial_payment:
+    mandatory:
+      - name: "delivery_proof"
+        description: "Proof of delivery"
+        validation:
+          required_fields:
+            - delivery_date
+            - delivery_location
+      
+      - name: "payment_proof"
+        description: "Proof of partial payment received (bank statement, receipt)"
+        validation:
+          required_fields:
+            - payment_date
+            - payment_amount
+            - payment_method
+    
+    optional:
+      - name: "purchase_order"
+        description: "Original purchase order"
+      
+      - name: "payment_reminders"
+        description: "Reminders sent regarding balance payment"
+  
+  # Documents specific to quality_dispute disputes
+  quality_dispute:
+    mandatory:
+      - name: "delivery_proof"
+        description: "Proof of delivery"
+      
+      - name: "purchase_order"
+        description: "Purchase order with quality specifications"
+        validation:
+          required_fields:
+            - quality_specifications
+            - acceptance_criteria
+    
+    optional:
+      - name: "quality_report"
+        description: "Third-party quality inspection report"
+        helpful_for: ["objective_assessment", "dispute_resolution"]
+      
+      - name: "correspondence"
+        description: "Email or written correspondence about quality issues"
+        helpful_for: ["timeline_establishment", "issue_documentation"]
+
+# Document validation rules
+validation:
+  # File size limits (in MB)
+  max_file_size_mb: 10
+  
+  # Allowed file formats
+  allowed_formats:
+    - "pdf"
+    - "jpg"
+    - "jpeg"
+    - "png"
+    - "tiff"
+  
+  # OCR requirements
+  ocr_enabled: true
+  ocr_required_fields:
+    - invoice_number
+    - invoice_date
+    - amount
+    - buyer_name
+    - seller_name
+  
+  # Entity extraction requirements
+  entity_extraction:
+    required_entities:
+      - amount
+      - date
+      - gstin
+      - party_names
+    optional_entities:
+      - bank_account
+      - ifsc_code
+      - payment_terms
+
