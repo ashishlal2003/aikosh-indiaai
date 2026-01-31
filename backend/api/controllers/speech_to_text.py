@@ -1,6 +1,7 @@
 """
 Speech-to-text controller for handling audio transcription.
 Integrates Groq Whisper API with database storage.
+Now uses the new conversations/messages schema for chat integration.
 """
 
 from dotenv import load_dotenv
@@ -9,7 +10,14 @@ import requests
 from typing import Optional
 from fastapi import HTTPException, File, UploadFile
 
+from api.daos.conversation_dao import MessageDAO
 from api.daos.transcription_dao import TranscriptionDAO
+from api.models.conversation import (
+    MessageCreate,
+    MessageType,
+    MessageRole,
+    VoiceMessageResponse,
+)
 from api.models.transcription import TranscriptionCreate, TranscriptionWithTextResponse
 
 
@@ -26,11 +34,12 @@ class SpeechToTextController:
     ]
 
     def __init__(self):
-        """Initialize controller with API credentials and DAO."""
+        """Initialize controller with API credentials and DAOs."""
         load_dotenv()
         self.groq_api_key = os.getenv("GROQ_API_KEY")
         self.max_file_size = int(os.getenv("MAX_FILE_SIZE", 10 * 1024 * 1024))
-        self.transcription_dao = TranscriptionDAO()
+        self.message_dao = MessageDAO()
+        self.transcription_dao = TranscriptionDAO()  # Keep for backward compatibility
 
     def transcribe(
         self,
@@ -38,7 +47,8 @@ class SpeechToTextController:
         claim_id: Optional[str] = None,
     ) -> TranscriptionWithTextResponse:
         """
-        Transcribe audio file and save to database.
+        Transcribe audio file and save to database (legacy endpoint).
+        Uses old transcriptions table for backward compatibility.
 
         Args:
             file: Uploaded audio file
@@ -69,13 +79,13 @@ class SpeechToTextController:
         # Transcribe with Groq Whisper
         transcription_text = self._call_groq_api(file)
 
-        # Save to database
+        # Save to database (old schema)
         try:
             transcription_create = TranscriptionCreate(
                 claim_id=claim_id,
                 transcription_text=transcription_text,
-                audio_file_name=file.filename,
-                audio_file_size=file.size,
+                audio_filename=file.filename,
+                audio_file_size_bytes=file.size,
                 audio_content_type=file.content_type,
                 model_used="whisper-large-v3-turbo",
             )
@@ -91,6 +101,78 @@ class SpeechToTextController:
             raise HTTPException(
                 status_code=500,
                 detail=f"Failed to save transcription to database: {str(e)}",
+            )
+
+    def transcribe_for_chat(
+        self,
+        file: UploadFile = File(...),
+        conversation_id: str = None,
+    ) -> VoiceMessageResponse:
+        """
+        Transcribe audio file and save to messages table (new schema).
+        This is the main method for chat-based voice messages.
+
+        Args:
+            file: Uploaded audio file
+            conversation_id: Conversation ID (e.g., "conv_1769865449664_icv7di7ih")
+
+        Returns:
+            VoiceMessageResponse: Contains transcription text and message record
+
+        Raises:
+            HTTPException: If file validation fails, transcription fails, or database save fails
+        """
+        if not conversation_id:
+            raise HTTPException(
+                status_code=400,
+                detail="conversation_id is required for chat transcription",
+            )
+
+        # Validate file type
+        if file.content_type not in self.ALLOWED_CONTENT_TYPES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported file type: {file.content_type}. "
+                f"Allowed types: {', '.join(self.ALLOWED_CONTENT_TYPES)}",
+            )
+
+        # Validate file size
+        if file.size > self.max_file_size:
+            max_size_mb = self.max_file_size / (1024 * 1024)
+            raise HTTPException(
+                status_code=400,
+                detail=f"File too large. Maximum size: {max_size_mb}MB",
+            )
+
+        # Transcribe with Groq Whisper
+        transcription_text = self._call_groq_api(file)
+
+        # Save to new messages table
+        try:
+            message_create = MessageCreate(
+                conversation_id=conversation_id,
+                message_type=MessageType.USER_VOICE,
+                role=MessageRole.USER,
+                content=transcription_text,  # Also store in content for easy retrieval
+                transcription_text=transcription_text,
+                audio_filename=file.filename,
+                audio_file_size_bytes=file.size,
+                audio_content_type=file.content_type,
+                transcription_model="whisper-large-v3-turbo",
+                detected_language="en",  # Could be enhanced with language detection
+            )
+
+            message_record = self.message_dao.create_message(message_create)
+
+            return VoiceMessageResponse(
+                text=transcription_text,
+                message=message_record,
+            )
+
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to save voice message to database: {str(e)}",
             )
 
     def _call_groq_api(self, file: UploadFile) -> str:

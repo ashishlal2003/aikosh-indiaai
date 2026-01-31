@@ -12,11 +12,11 @@ class TranscriptionCreate(BaseModel):
 
     claim_id: Optional[str] = Field(None, description="Associated claim ID")
     transcription_text: str = Field(..., description="The transcribed text")
-    audio_file_name: str = Field(..., description="Original audio file name")
-    audio_file_size: int = Field(..., description="Audio file size in bytes")
-    audio_content_type: str = Field(..., description="Audio file content type")
-    language: Optional[str] = Field("en", description="Detected language code")
-    duration: Optional[float] = Field(None, description="Audio duration in seconds")
+    audio_filename: str = Field(..., description="Original audio file name")
+    audio_file_size_bytes: int = Field(..., description="Audio file size in bytes")
+    audio_content_type: str = Field(..., description="Audio file content type (MIME type)")
+    detected_language: Optional[str] = Field("en", description="Detected language code")
+    audio_duration_seconds: Optional[float] = Field(None, description="Audio duration in seconds")
     model_used: str = Field(default="whisper-large-v3-turbo", description="Transcription model used")
 
 
@@ -26,11 +26,11 @@ class TranscriptionResponse(BaseModel):
     id: str = Field(..., description="Transcription record ID")
     claim_id: Optional[str] = Field(None, description="Associated claim ID")
     transcription_text: str = Field(..., description="The transcribed text")
-    audio_file_name: str = Field(..., description="Original audio file name")
-    audio_file_size: int = Field(..., description="Audio file size in bytes")
-    audio_content_type: str = Field(..., description="Audio file content type")
-    language: Optional[str] = Field(None, description="Detected language code")
-    duration: Optional[float] = Field(None, description="Audio duration in seconds")
+    audio_filename: str = Field(..., description="Original audio file name")
+    audio_file_size_bytes: int = Field(..., description="Audio file size in bytes")
+    audio_content_type: str = Field(..., description="Audio file content type (MIME type)")
+    detected_language: Optional[str] = Field(None, description="Detected language code")
+    audio_duration_seconds: Optional[float] = Field(None, description="Audio duration in seconds")
     model_used: str = Field(..., description="Transcription model used")
     created_at: datetime = Field(..., description="Timestamp of creation")
 

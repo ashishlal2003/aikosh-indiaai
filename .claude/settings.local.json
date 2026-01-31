@@ -2,7 +2,15 @@
   "permissions": {
     "allow": [
       "Bash(ls:*)",
-      "Bash(test:*)"
+      "Bash(test:*)",
+      "Bash(npm install:*)",
+      "Bash(npx tailwindcss init -p)",
+      "Bash(node node_modules/tailwindcss/lib/cli.js:*)",
+      "Bash(curl:*)",
+      "Bash(npm run dev:*)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(python -c:*)"
     ]
   }
 }

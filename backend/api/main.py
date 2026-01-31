@@ -3,9 +3,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 import os
 from api.routes.speech_to_text import router as speech_to_text_router
+from api.routes.chat import router as chat_router
 load_dotenv()
 
-app = FastAPI()
+app = FastAPI(
+    title="MSME ODR Assistant API",
+    description="AI-powered conversational assistant for MSME dispute resolution",
+    version="1.0.0"
+)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=os.getenv("ALLOWED_ORIGINS").split(","),
@@ -14,7 +20,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(speech_to_text_router, prefix="/api")
+app.include_router(speech_to_text_router, prefix="/api", tags=["Speech to Text"])
+app.include_router(chat_router, prefix="/api", tags=["Chat"])
 
 @app.get("/health")
 def health():
