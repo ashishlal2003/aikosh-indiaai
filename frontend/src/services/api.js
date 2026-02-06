@@ -4,12 +4,12 @@ const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL,
 });
 
-export const transcribeAudio = async (audioBlob, language = 'en', claimId = null) => {
+export const transcribeAudio = async (audioBlob, language = 'en', conversationId = null) => {
   const formData = new FormData();
   formData.append('file', audioBlob, 'recording.webm');
-  if (claimId) formData.append('claim_id', claimId);
+  if (conversationId) formData.append('conversation_id', conversationId);
 
-  const response = await api.post('/api/transcribe', formData, {
+  const response = await api.post('/api/transcribe-chat', formData, {
     headers: {
       'Content-Type': 'multipart/form-data',
     },

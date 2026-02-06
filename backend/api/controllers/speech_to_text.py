@@ -1,24 +1,21 @@
 """
 Speech-to-text controller for handling audio transcription.
 Integrates Groq Whisper API with database storage.
-Now uses the new conversations/messages schema for chat integration.
+Uses the conversations/messages schema for chat integration.
 """
 
 from dotenv import load_dotenv
 import os
 import requests
-from typing import Optional
 from fastapi import HTTPException, File, UploadFile
 
 from api.daos.conversation_dao import MessageDAO
-from api.daos.transcription_dao import TranscriptionDAO
 from api.models.conversation import (
     MessageCreate,
     MessageType,
     MessageRole,
     VoiceMessageResponse,
 )
-from api.models.transcription import TranscriptionCreate, TranscriptionWithTextResponse
 
 
 class SpeechToTextController:
@@ -39,69 +36,6 @@ class SpeechToTextController:
         self.groq_api_key = os.getenv("GROQ_API_KEY")
         self.max_file_size = int(os.getenv("MAX_FILE_SIZE", 10 * 1024 * 1024))
         self.message_dao = MessageDAO()
-        self.transcription_dao = TranscriptionDAO()  # Keep for backward compatibility
-
-    def transcribe(
-        self,
-        file: UploadFile = File(...),
-        claim_id: Optional[str] = None,
-    ) -> TranscriptionWithTextResponse:
-        """
-        Transcribe audio file and save to database (legacy endpoint).
-        Uses old transcriptions table for backward compatibility.
-
-        Args:
-            file: Uploaded audio file
-            claim_id: Optional claim ID to associate with transcription
-
-        Returns:
-            TranscriptionWithTextResponse: Contains transcription text and database record
-
-        Raises:
-            HTTPException: If file validation fails, transcription fails, or database save fails
-        """
-        # Validate file type
-        if file.content_type not in self.ALLOWED_CONTENT_TYPES:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unsupported file type: {file.content_type}. "
-                f"Allowed types: {', '.join(self.ALLOWED_CONTENT_TYPES)}",
-            )
-
-        # Validate file size
-        if file.size > self.max_file_size:
-            max_size_mb = self.max_file_size / (1024 * 1024)
-            raise HTTPException(
-                status_code=400,
-                detail=f"File too large. Maximum size: {max_size_mb}MB",
-            )
-
-        # Transcribe with Groq Whisper
-        transcription_text = self._call_groq_api(file)
-
-        # Save to database (old schema)
-        try:
-            transcription_create = TranscriptionCreate(
-                claim_id=claim_id,
-                transcription_text=transcription_text,
-                audio_filename=file.filename,
-                audio_file_size_bytes=file.size,
-                audio_content_type=file.content_type,
-                model_used="whisper-large-v3-turbo",
-            )
-
-            db_record = self.transcription_dao.create_transcription(transcription_create)
-
-            return TranscriptionWithTextResponse(
-                text=transcription_text,
-                record=db_record,
-            )
-
-        except Exception as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to save transcription to database: {str(e)}",
-            )
 
     def transcribe_for_chat(
         self,
@@ -109,7 +43,7 @@ class SpeechToTextController:
         conversation_id: str = None,
     ) -> VoiceMessageResponse:
         """
-        Transcribe audio file and save to messages table (new schema).
+        Transcribe audio file and save to messages table.
         This is the main method for chat-based voice messages.
 
         Args:
@@ -147,19 +81,19 @@ class SpeechToTextController:
         # Transcribe with Groq Whisper
         transcription_text = self._call_groq_api(file)
 
-        # Save to new messages table
+        # Save to messages table
         try:
             message_create = MessageCreate(
                 conversation_id=conversation_id,
                 message_type=MessageType.USER_VOICE,
                 role=MessageRole.USER,
-                content=transcription_text,  # Also store in content for easy retrieval
+                content=transcription_text,
                 transcription_text=transcription_text,
                 audio_filename=file.filename,
                 audio_file_size_bytes=file.size,
                 audio_content_type=file.content_type,
                 transcription_model="whisper-large-v3-turbo",
-                detected_language="en",  # Could be enhanced with language detection
+                detected_language="en",
             )
 
             message_record = self.message_dao.create_message(message_create)
@@ -201,7 +135,6 @@ class SpeechToTextController:
             response.raise_for_status()
             result = response.json()
 
-            # Extract text from Groq response
             if "text" not in result:
                 raise HTTPException(
                     status_code=500,

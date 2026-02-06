@@ -23,11 +23,27 @@
   - UI statistics ("Powered by 50,000+ Karnataka MSMEs from AI Kosh")
 - **Implementation:** Day 10 - AI Kosh Showcase, Day 14 - Demo Data
 
+### 3. MSMED Act 2006 (RAG Knowledge Base) ✅ IMPLEMENTED
+- **Source:** External (government gazette PDF)
+- **Type:** Legal document (PDF, 242KB)
+- **File:** `../knowledge_base/msmed_act.pdf`
+- **Implementation:**
+  - Parsed with `pypdf` → extracted full text
+  - Chunked into 50+ segments (500 chars with overlap)
+  - Embedded with `sentence-transformers` (all-MiniLM-L6-v2)
+  - Indexed in FAISS vector database (`../vector_db/`)
+- **Use Case:**
+  - RAG-based retrieval for accurate MSMED Act citations
+  - Dynamic context injection into chatbot responses
+  - AI provides exact section references (Section 15, 16, 17, etc.)
+- **Scripts:**
+  - `scripts/build_index.py` - Build/rebuild FAISS index
+  - `scripts/test_rag.py` - Test retrieval accuracy
+
 ## Datasets Still Needed
 
 ### High Priority
 - Tamil/Telugu voice samples (for broader language coverage)
-- MSMED Act 2006 legal text (for RAG knowledge base)
 
 ### Medium Priority
 - Sample Indian invoice images (for OCR testing)
@@ -41,6 +57,7 @@
 This integration demonstrates our commitment to leveraging government AI resources:
 - **4 Hindi voice samples** validate multilingual voice input
 - **Karnataka MSME data** ensures realistic demo scenarios
+- **MSMED Act RAG system** provides accurate legal citations from official documents
 - **Transparent usage** - we document what we found vs. what we hoped for
 
 Even with limited datasets available, we've maximized their usage to build an accessible, India-first MSME ODR solution.

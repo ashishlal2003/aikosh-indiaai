@@ -1,13 +1,25 @@
 """Pydantic models for API request/response validation."""
 
-from api.models.transcription import (
-    TranscriptionCreate,
-    TranscriptionResponse,
-    TranscriptionWithTextResponse,
+from api.models.conversation import (
+    ConversationCreate,
+    ConversationUpdate,
+    ConversationResponse,
+    MessageCreate,
+    MessageResponse,
+    MessageType,
+    MessageRole,
+    VoiceMessageResponse,
+    ConversationWithMessages,
 )
 
 __all__ = [
-    "TranscriptionCreate",
-    "TranscriptionResponse",
-    "TranscriptionWithTextResponse",
+    "ConversationCreate",
+    "ConversationUpdate",
+    "ConversationResponse",
+    "MessageCreate",
+    "MessageResponse",
+    "MessageType",
+    "MessageRole",
+    "VoiceMessageResponse",
+    "ConversationWithMessages",
 ]

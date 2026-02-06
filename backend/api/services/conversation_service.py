@@ -1,14 +1,20 @@
 """
 Conversation service for handling AI chat interactions.
 Integrates Groq LLM for conversational dispute resolution assistance.
+Uses RAG for dynamic knowledge retrieval from MSMED Act and other documents.
 """
 
 from dotenv import load_dotenv
 import os
+import logging
 from groq import Groq
-from typing import List, Dict, Optional
+from typing import List, Dict
+
+from .rag_service import get_rag_service
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 
 class ConversationService:
@@ -20,7 +26,7 @@ Your responsibilities:
 1. Gather information about unpaid invoices and payment disputes
 2. Ask clarifying questions to understand the situation
 3. Request necessary documents (invoices, purchase orders, delivery receipts, contracts)
-4. Explain MSMED Act provisions (especially Section 15 - interest on delayed payments)
+4. Explain MSMED Act provisions using the knowledge provided in the context
 5. Provide negotiation strategies
 6. Draft professional communication to buyers
 7. Guide through the dispute resolution process
@@ -33,12 +39,6 @@ Key information you need to collect:
 - Days overdue
 - Supporting documents (PO, invoice, delivery proof, contract)
 
-MSMED Act Key Points:
-- Section 15: Buyers must pay within 45 days of acceptance or deemed acceptance
-- Interest: 3x bank rate on delayed payments
-- Dispute resolution through MSME Facilitation Council
-- No court fees for MSMEs
-
 Communication Style:
 - Be empathetic and supportive
 - Use simple language (avoid legal jargon unless explaining)
@@ -47,16 +47,17 @@ Communication Style:
 - Provide actionable advice
 - Support English, Hindi, and other Indian languages if user switches
 
-Important: Always be helpful, never make definitive legal claims, suggest consulting a lawyer for complex cases."""
+Important: Always be helpful, never make definitive legal claims, suggest consulting a lawyer for complex cases. Use the context provided below to give accurate information about the MSMED Act and dispute resolution."""
 
     def __init__(self):
-        """Initialize conversation service with Groq client."""
+        """Initialize conversation service with Groq client and RAG service."""
         self.groq_api_key = os.getenv("GROQ_API_KEY")
         if not self.groq_api_key:
             raise ValueError("GROQ_API_KEY not found in environment variables")
 
         self.client = Groq(api_key=self.groq_api_key)
-        self.model = "llama-3.1-8b-instant"  # Using Llama 3 70B for best conversational quality
+        self.model = "llama-3.1-8b-instant"
+        self.rag_service = get_rag_service()
 
     def get_ai_response(
         self,
@@ -76,9 +77,32 @@ Important: Always be helpful, never make definitive legal claims, suggest consul
             Dictionary with 'response' and optional 'actions'
         """
         try:
+            # Get latest user message for RAG query
+            user_query = ""
+            for msg in reversed(messages):
+                if msg.get("role") == "user":
+                    user_query = msg.get("content", "")
+                    break
+
+            # Retrieve relevant context from knowledge base
+            rag_context = ""
+            if user_query and self.rag_service.is_index_available():
+                rag_context = self.rag_service.get_context_for_query(user_query)
+                if rag_context:
+                    logger.info(f"[RAG] Retrieved {len(rag_context)} chars of context for query: '{user_query[:50]}...'")
+                else:
+                    logger.info(f"[RAG] No context retrieved for query: '{user_query[:50]}...'")
+            else:
+                logger.warning("[RAG] Index not available - using base prompt only")
+
+            # Build system prompt with RAG context
+            system_prompt = self.SYSTEM_PROMPT
+            if rag_context:
+                system_prompt += f"\n\n--- RELEVANT KNOWLEDGE FROM MSMED ACT & DOCUMENTS ---\n\n{rag_context}\n\n--- END OF CONTEXT ---"
+
             # Prepare messages with system prompt
             chat_messages = [
-                {"role": "system", "content": self.SYSTEM_PROMPT}
+                {"role": "system", "content": system_prompt}
             ] + messages
 
             # Call Groq API
