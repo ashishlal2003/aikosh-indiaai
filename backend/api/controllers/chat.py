@@ -1,7 +1,7 @@
 """
 Chat controller for handling conversational AI interactions.
 Now integrated with the new conversations/messages schema.
-Uses IndicPhotoOCR (Bhashini) for document OCR.
+Uses Tesseract OCR for document text extraction.
 """
 
 import os
@@ -13,10 +13,15 @@ from pydantic import BaseModel
 from api.services.conversation_service import ConversationService
 from api.services.ocr_service import get_ocr_service
 from api.daos.conversation_dao import ConversationDAO, MessageDAO
+from api.daos.document_dao import DocumentDAO
 from api.models.conversation import (
     MessageCreate,
     MessageType,
     MessageRole,
+)
+from api.models.document import (
+    DisputeDocumentCreate,
+    DocumentType,
 )
 
 
@@ -56,6 +61,7 @@ class ChatController:
         self.ocr_service = get_ocr_service()
         self.conversation_dao = ConversationDAO()
         self.message_dao = MessageDAO()
+        self.document_dao = DocumentDAO()
 
     def process_chat_message(self, request: ChatRequest) -> ChatResponse:
         """
@@ -129,7 +135,7 @@ class ChatController:
     ) -> DocumentUploadResponse:
         """
         Upload and process document in chat context.
-        Uses IndicPhotoOCR (Bhashini) for text extraction.
+        Uses Tesseract OCR for text extraction.
 
         Args:
             file: Uploaded file
@@ -169,33 +175,64 @@ class ChatController:
                 tmp_path = tmp_file.name
 
             try:
+                # TBD make this better rather than just filename matching
                 # Detect document type from filename
                 filename_lower = file.filename.lower() if file.filename else ""
                 if "invoice" in filename_lower or "bill" in filename_lower:
-                    doc_type = "invoice"
+                    doc_type = DocumentType.INVOICE
                 elif "po" in filename_lower or "purchase" in filename_lower:
-                    doc_type = "purchase_order"
+                    doc_type = DocumentType.PURCHASE_ORDER
+                elif "delivery" in filename_lower or "receipt" in filename_lower:
+                    doc_type = DocumentType.DELIVERY_PROOF
+                elif "udyam" in filename_lower or "msme" in filename_lower or "certificate" in filename_lower:
+                    doc_type = DocumentType.MSME_CERTIFICATE
+                elif "email" in filename_lower or "communication" in filename_lower:
+                    doc_type = DocumentType.COMMUNICATION
+                elif "bank" in filename_lower or "statement" in filename_lower:
+                    doc_type = DocumentType.BANK_STATEMENT
+                elif "notice" in filename_lower or "legal" in filename_lower:
+                    doc_type = DocumentType.LEGAL_NOTICE
                 else:
-                    doc_type = "invoice"  # Default to invoice for MSME use case
+                    doc_type = DocumentType.INVOICE  # Default to invoice for MSME use case
 
                 # Process document with OCR service
                 extracted_result = self.ocr_service.process_document(
                     file_path=tmp_path,
                     file_type=file.content_type,
-                    document_type=doc_type
+                    document_type=doc_type.value
                 )
+
+                # Get raw OCR text if available
+                raw_ocr_text = extracted_result.get("raw_text", "")
 
                 # Format for chat display
                 extracted_data = self.ocr_service.format_for_chat(extracted_result)
 
-                # Save document upload as a message
+                # Get conversation UUID for foreign key
+                conversation = self.conversation_dao.get_or_create_conversation(conversation_id)
+
+                # Save to dispute_documents table for officer review
+                dispute_doc = DisputeDocumentCreate(
+                    conversation_id=conversation.id,
+                    document_type=doc_type,
+                    original_filename=file.filename or "unknown",
+                    file_size_bytes=len(content),
+                    content_type=file.content_type,
+                    extracted_data=extracted_result,
+                    raw_ocr_text=raw_ocr_text,
+                    metadata={"source": "chat_upload"},
+                )
+                self.document_dao.create_document(dispute_doc)
+
+                # Save document upload as a message (for chat history)
                 doc_message = MessageCreate(
                     conversation_id=conversation_id,
-                    message_type=MessageType.USER_DOCUMENT,
+                    message_type=MessageType.DOCUMENT,
                     role=MessageRole.USER,
                     content=f"[Uploaded document: {file.filename}]",
+                    document_filename=file.filename,
+                    document_type=doc_type.value,
                     metadata={
-                        "file_name": file.filename,
                         "file_type": file.content_type,
                         "extracted_data": extracted_result
                     },

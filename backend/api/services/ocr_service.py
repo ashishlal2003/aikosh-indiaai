@@ -1,6 +1,6 @@
 """
 OCR Service for document text extraction and structured data parsing.
-Uses IndicPhotoOCR (Bhashini/IIT Jodhpur) for Indian language OCR.
+Uses Tesseract OCR for English, Hindi, and Kannada text extraction.
 Uses Groq LLM for extracting structured invoice/document data.
 """
 
@@ -17,25 +17,24 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-# Lazy load IndicPhotoOCR to avoid import errors if not installed
-_ocr_system = None
+# Lazy load Tesseract to verify availability
+_ocr_available = None
 
 
 def get_ocr_system():
-    """Lazy load OCR system to avoid slow imports on startup."""
-    global _ocr_system
-    if _ocr_system is None:
+    """Check if Tesseract OCR is available."""
+    global _ocr_available
+    if _ocr_available is None:
         try:
-            from IndicPhotoOCR.ocr import OCR
-            _ocr_system = OCR(verbose=False)
-            logger.info("[OCR] IndicPhotoOCR initialized successfully")
-        except ImportError as e:
-            logger.warning(f"[OCR] IndicPhotoOCR not available: {e}. Falling back to basic extraction.")
-            _ocr_system = "fallback"
+            import pytesseract
+            # Verify tesseract is installed
+            version = pytesseract.get_tesseract_version()
+            logger.info(f"[OCR] Tesseract v{version} initialized successfully")
+            _ocr_available = True
         except Exception as e:
-            logger.error(f"[OCR] Error initializing IndicPhotoOCR: {e}")
-            _ocr_system = "fallback"
-    return _ocr_system
+            logger.warning(f"[OCR] Tesseract not available: {e}")
+            _ocr_available = False
+    return _ocr_available
 
 
 class OCRService:
@@ -73,44 +72,62 @@ class OCRService:
 
         self.model = "llama-3.1-8b-instant"
 
-    def extract_text_from_image(self, image_path: str, language: str = "hi") -> str:
+    # Language code mapping for Tesseract
+    LANG_MAP = {
+        "en": "eng",
+        "hi": "hin",
+        "kn": "kan",
+        "kan": "kan",
+        "hin": "hin",
+        "eng": "eng",
+        "english": "eng",
+        "hindi": "hin",
+        "kannada": "kan",
+    }
+
+    def extract_text_from_image(self, image_path: str, language: str = "eng+hin+kan") -> str:
         """
-        Extract text from image using IndicPhotoOCR.
+        Extract text from image using Tesseract OCR.
 
         Args:
             image_path: Path to image file
-            language: Language code (hi=Hindi, en=English, ta=Tamil, etc.)
+            language: Language code(s) - can be "eng", "hin", "kan" or combined "eng+hin+kan"
 
         Returns:
             Extracted text string
         """
-        ocr = get_ocr_system()
-
-        if ocr == "fallback":
-            logger.warning("[OCR] Using fallback - no OCR available")
-            return "[OCR not available - please install IndicPhotoOCR]"
+        if not get_ocr_system():
+            logger.warning("[OCR] Tesseract not available")
+            return "[OCR not available - please install tesseract-ocr]"
 
         try:
+            import pytesseract
+            from PIL import Image
+
             logger.info(f"[OCR] Extracting text from: {image_path}")
 
-            # Run OCR
-            results = ocr.ocr(image_path)
+            # Open and preprocess image
+            img = Image.open(image_path)
 
-            # Combine all detected text
-            extracted_texts = []
-            if results:
-                for result in results:
-                    if isinstance(result, dict) and 'text' in result:
-                        extracted_texts.append(result['text'])
-                    elif isinstance(result, (list, tuple)) and len(result) > 1:
-                        # Handle different result formats
-                        text = result[1] if len(result) > 1 else result[0]
-                        if isinstance(text, str):
-                            extracted_texts.append(text)
-                        elif isinstance(text, (list, tuple)) and len(text) > 0:
-                            extracted_texts.append(str(text[0]))
+            # Convert to RGB if necessary (handles RGBA, grayscale, etc.)
+            if img.mode not in ('RGB', 'L'):
+                img = img.convert('RGB')
 
-            full_text = "\n".join(extracted_texts)
+            # Map language codes to Tesseract format
+            lang_codes = []
+            for lang in language.split('+'):
+                mapped = self.LANG_MAP.get(lang.lower(), lang)
+                if mapped not in lang_codes:
+                    lang_codes.append(mapped)
+            tesseract_lang = '+'.join(lang_codes)
+
+            logger.info(f"[OCR] Using languages: {tesseract_lang}")
+
+            # Run Tesseract OCR
+            text = pytesseract.image_to_string(img, lang=tesseract_lang)
+
+            # Clean up text
+            full_text = text.strip()
             logger.info(f"[OCR] Extracted {len(full_text)} characters")
 
             return full_text if full_text else "[No text detected in image]"
@@ -155,12 +172,13 @@ class OCRService:
             logger.error(f"[OCR] Error reading PDF: {e}")
             return f"[PDF Error: {str(e)}]"
 
-    def _ocr_scanned_pdf(self, pdf_path: str) -> str:
+    def _ocr_scanned_pdf(self, pdf_path: str, language: str = "eng+hin+kan") -> str:
         """
         Convert scanned PDF to images and OCR each page.
 
         Args:
             pdf_path: Path to PDF file
+            language: Language code(s) for OCR
 
         Returns:
             Extracted text string
@@ -176,7 +194,7 @@ class OCRService:
                 # Save temp image
                 with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
                     image.save(tmp.name, 'PNG')
-                    page_text = self.extract_text_from_image(tmp.name)
+                    page_text = self.extract_text_from_image(tmp.name, language=language)
                     all_text.append(f"--- Page {i+1} ---\n{page_text}")
                     os.unlink(tmp.name)  # Clean up temp file
 
@@ -221,6 +239,16 @@ class OCRService:
             prompt = self._build_invoice_extraction_prompt(raw_text)
         elif document_type == "purchase_order":
             prompt = self._build_po_extraction_prompt(raw_text)
+        elif document_type == "msme_certificate":
+            prompt = self._build_msme_certificate_extraction_prompt(raw_text)
+        elif document_type == "delivery_proof":
+            prompt = self._build_delivery_proof_extraction_prompt(raw_text)
+        elif document_type == "communication":
+            prompt = self._build_communication_extraction_prompt(raw_text)
+        elif document_type == "bank_statement":
+            prompt = self._build_bank_statement_extraction_prompt(raw_text)
+        elif document_type == "legal_notice":
+            prompt = self._build_legal_notice_extraction_prompt(raw_text)
         else:
             prompt = self._build_generic_extraction_prompt(raw_text)
 
@@ -320,6 +348,7 @@ Purchase Order Text:
 
 JSON:"""
 
+## TBD - so manyy functions and prompts - need to refactor
     def _build_generic_extraction_prompt(self, raw_text: str) -> str:
         """Build prompt for generic document extraction."""
         return f"""Extract key information from this document and return as JSON:
@@ -332,9 +361,144 @@ Try to identify:
 - reference_numbers: Any reference/ID numbers
 - key_details: Other important information
 
+IMPORTANT: If a field is not clearly visible in the text, set it to null. DO NOT make up or guess values.
+
 Return ONLY valid JSON, no explanations.
 
 Document Text:
+---
+{raw_text}
+---
+
+JSON:"""
+
+    def _build_msme_certificate_extraction_prompt(self, raw_text: str) -> str:
+        """Build prompt for MSME/Udyam certificate extraction."""
+        return f"""Extract the following information from this MSME/Udyam Registration Certificate and return as JSON:
+
+Required fields:
+- udyam_registration_number: The Udyam Registration Number (format: UDYAM-XX-00-0000000)
+- enterprise_name: Name of the enterprise/business
+- enterprise_type: Type (Micro/Small/Medium)
+- owner_name: Name of the owner/proprietor
+- date_of_registration: Registration date (format: YYYY-MM-DD)
+- date_of_incorporation: Incorporation date if mentioned
+- major_activity: NIC code or activity description
+- address: Registered address
+- district: District name
+- state: State name
+- mobile: Mobile number if present
+- email: Email if present
+
+CRITICAL: If a field is not clearly visible in the text, set it to null. DO NOT guess or make up values.
+If the text appears to be garbage/unreadable, set all fields to null and add "extraction_quality": "poor".
+
+Return ONLY valid JSON, no explanations.
+
+Certificate Text:
+---
+{raw_text}
+---
+
+JSON:"""
+
+    def _build_delivery_proof_extraction_prompt(self, raw_text: str) -> str:
+        """Build prompt for delivery receipt/proof extraction."""
+        return f"""Extract the following information from this delivery receipt/proof and return as JSON:
+
+Required fields:
+- delivery_date: Date of delivery (format: YYYY-MM-DD)
+- delivery_challan_number: Challan/receipt number
+- receiver_name: Name of person who received
+- receiver_signature: Whether signature is present (true/false)
+- sender_name: Sender/supplier company name
+- recipient_company: Receiving company name
+- items_delivered: List of items with quantities
+- vehicle_number: Vehicle/transport details if present
+- remarks: Any remarks or notes
+
+CRITICAL: If a field is not clearly visible in the text, set it to null. DO NOT guess or make up values.
+
+Return ONLY valid JSON, no explanations.
+
+Delivery Proof Text:
+---
+{raw_text}
+---
+
+JSON:"""
+
+    def _build_communication_extraction_prompt(self, raw_text: str) -> str:
+        """Build prompt for email/communication extraction."""
+        return f"""Extract the following information from this email/communication and return as JSON:
+
+Required fields:
+- date: Date of communication (format: YYYY-MM-DD)
+- from: Sender name/email
+- to: Recipient name/email
+- subject: Subject line
+- key_points: List of main points discussed
+- payment_mentioned: Whether payment/amount is discussed (true/false)
+- amount_mentioned: Any specific amount mentioned
+- deadline_mentioned: Any deadline or due date mentioned
+- tone: Overall tone (formal/informal/threatening/reminder)
+
+CRITICAL: If a field is not clearly visible in the text, set it to null. DO NOT guess or make up values.
+
+Return ONLY valid JSON, no explanations.
+
+Communication Text:
+---
+{raw_text}
+---
+
+JSON:"""
+
+    def _build_bank_statement_extraction_prompt(self, raw_text: str) -> str:
+        """Build prompt for bank statement extraction."""
+        return f"""Extract the following information from this bank statement and return as JSON:
+
+Required fields:
+- account_holder_name: Name on the account
+- account_number: Bank account number (may be partially masked)
+- bank_name: Name of the bank
+- statement_period: Start and end date of statement
+- transactions: List of transactions with date, description, amount, type (credit/debit)
+- opening_balance: Opening balance
+- closing_balance: Closing balance
+- payment_received_from: Any payments received from the buyer in dispute
+
+CRITICAL: If a field is not clearly visible in the text, set it to null. DO NOT guess or make up values.
+
+Return ONLY valid JSON, no explanations.
+
+Bank Statement Text:
+---
+{raw_text}
+---
+
+JSON:"""
+
+    def _build_legal_notice_extraction_prompt(self, raw_text: str) -> str:
+        """Build prompt for legal notice extraction."""
+        return f"""Extract the following information from this legal notice and return as JSON:
+
+Required fields:
+- notice_date: Date of notice (format: YYYY-MM-DD)
+- from_party: Who is sending the notice
+- to_party: Who is receiving the notice
+- lawyer_name: Lawyer/advocate name if mentioned
+- subject_matter: What the notice is about
+- amount_claimed: Amount being claimed
+- deadline_given: Response deadline
+- legal_sections_cited: Any laws/sections mentioned
+- relief_sought: What action is demanded
+
+CRITICAL: If a field is not clearly visible in the text, set it to null. DO NOT guess or make up values.
+
+Return ONLY valid JSON, no explanations.
+
+Legal Notice Text:
 ---
 {raw_text}
 ---
@@ -378,6 +542,18 @@ JSON:"""
 
         return structured_data
 
+    def _count_extracted_fields(self, data: Dict[str, Any]) -> int:
+        """Count how many fields were successfully extracted (non-null, non-empty)."""
+        excluded_keys = {'raw_text', 'extraction_status', 'file_path', 'file_type',
+                         'document_type', 'error', 'llm_response', 'extraction_quality'}
+        count = 0
+        for key, value in data.items():
+            if key in excluded_keys:
+                continue
+            if value is not None and value != "" and value != []:
+                count += 1
+        return count
+
     def format_for_chat(self, extracted_data: Dict[str, Any]) -> str:
         """
         Format extracted data as a readable string for chat display.
@@ -388,47 +564,110 @@ JSON:"""
         Returns:
             Formatted string for display
         """
-        if extracted_data.get("extraction_status") == "failed":
-            return f"""📄 **Document Uploaded**
+        doc_type = extracted_data.get("document_type", "unknown")
 
-⚠️ Could not fully extract document details.
+        # Check extraction quality
+        if extracted_data.get("extraction_status") == "failed":
+            return self._format_failed_extraction(extracted_data)
+
+        if extracted_data.get("extraction_quality") == "poor":
+            return self._format_poor_extraction(extracted_data)
+
+        # Count how many fields were extracted
+        field_count = self._count_extracted_fields(extracted_data)
+
+        if field_count < 2:
+            return self._format_insufficient_extraction(extracted_data)
+
+        # Route to document-specific formatters
+        if doc_type == "invoice":
+            return self._format_invoice(extracted_data)
+        elif doc_type == "purchase_order":
+            return self._format_purchase_order(extracted_data)
+        elif doc_type == "msme_certificate":
+            return self._format_msme_certificate(extracted_data)
+        elif doc_type == "delivery_proof":
+            return self._format_delivery_proof(extracted_data)
+        elif doc_type == "communication":
+            return self._format_communication(extracted_data)
+        elif doc_type == "bank_statement":
+            return self._format_bank_statement(extracted_data)
+        elif doc_type == "legal_notice":
+            return self._format_legal_notice(extracted_data)
+        else:
+            return self._format_generic(extracted_data)
+
+    def _format_failed_extraction(self, data: Dict[str, Any]) -> str:
+        """Format message for failed extraction."""
+        raw_preview = data.get('raw_text', 'No text extracted')[:300]
+        return f"""📄 **Document Uploaded**
+
+⚠️ **Could not extract document details.**
 
 Raw text preview:
 ```
-{extracted_data.get('raw_text', 'No text extracted')[:500]}...
+{raw_preview}...
 ```
 
-Please verify the document is clear and try again, or manually enter the details."""
+The document may be unclear, rotated, or in an unsupported format.
+Please upload a clearer image or manually tell me the key details."""
 
-        lines = ["📄 **Document Extracted Successfully**\n"]
+    def _format_poor_extraction(self, data: Dict[str, Any]) -> str:
+        """Format message for poor quality extraction."""
+        return f"""📄 **Document Uploaded**
 
-        # Invoice-specific formatting
-        if extracted_data.get("invoice_number"):
-            lines.append(f"**Invoice Number:** {extracted_data['invoice_number']}")
-        if extracted_data.get("invoice_date"):
-            lines.append(f"**Invoice Date:** {extracted_data['invoice_date']}")
-        if extracted_data.get("seller_name"):
-            lines.append(f"**Seller:** {extracted_data['seller_name']}")
-        if extracted_data.get("seller_gstin"):
-            lines.append(f"**Seller GSTIN:** {extracted_data['seller_gstin']}")
-        if extracted_data.get("buyer_name"):
-            lines.append(f"**Buyer:** {extracted_data['buyer_name']}")
-        if extracted_data.get("buyer_gstin"):
-            lines.append(f"**Buyer GSTIN:** {extracted_data['buyer_gstin']}")
-        if extracted_data.get("total_amount"):
-            lines.append(f"**Total Amount:** ₹{extracted_data['total_amount']}")
-        if extracted_data.get("tax_amount"):
-            lines.append(f"**Tax/GST:** ₹{extracted_data['tax_amount']}")
-        if extracted_data.get("due_date"):
-            lines.append(f"**Due Date:** {extracted_data['due_date']}")
-        if extracted_data.get("payment_terms"):
-            lines.append(f"**Payment Terms:** {extracted_data['payment_terms']}")
+⚠️ **Low quality extraction** - The text in this document was difficult to read.
 
-        # Items if present
-        items = extracted_data.get("items", [])
+I could not reliably extract the details. Please:
+1. Upload a clearer/higher resolution image, OR
+2. Tell me the key details from this document manually
+
+What information does this document contain?"""
+
+    def _format_insufficient_extraction(self, data: Dict[str, Any]) -> str:
+        """Format message when too few fields were extracted."""
+        doc_type = data.get("document_type", "document")
+        raw_preview = data.get('raw_text', '')[:200]
+        return f"""📄 **Document Uploaded** ({doc_type})
+
+⚠️ **Incomplete extraction** - I could only extract limited information from this document.
+
+Raw text I found:
+```
+{raw_preview}...
+```
+
+Please tell me the key details from this {doc_type} so I can proceed with your case."""
+
+    def _format_invoice(self, data: Dict[str, Any]) -> str:
+        """Format invoice extraction."""
+        lines = ["📄 **Invoice Extracted**\n"]
+
+        if data.get("invoice_number"):
+            lines.append(f"**Invoice Number:** {data['invoice_number']}")
+        if data.get("invoice_date"):
+            lines.append(f"**Invoice Date:** {data['invoice_date']}")
+        if data.get("seller_name"):
+            lines.append(f"**Seller:** {data['seller_name']}")
+        if data.get("seller_gstin"):
+            lines.append(f"**Seller GSTIN:** {data['seller_gstin']}")
+        if data.get("buyer_name"):
+            lines.append(f"**Buyer:** {data['buyer_name']}")
+        if data.get("buyer_gstin"):
+            lines.append(f"**Buyer GSTIN:** {data['buyer_gstin']}")
+        if data.get("total_amount"):
+            lines.append(f"**Total Amount:** ₹{data['total_amount']}")
+        if data.get("tax_amount"):
+            lines.append(f"**Tax/GST:** ₹{data['tax_amount']}")
+        if data.get("due_date"):
+            lines.append(f"**Due Date:** {data['due_date']}")
+        if data.get("payment_terms"):
+            lines.append(f"**Payment Terms:** {data['payment_terms']}")
+
+        items = data.get("items", [])
         if items and isinstance(items, list):
             lines.append("\n**Items:**")
-            for item in items[:5]:  # Show first 5 items
+            for item in items[:5]:
                 if isinstance(item, dict):
                     desc = item.get("description", item.get("name", "Item"))
                     qty = item.get("quantity", "")
@@ -438,7 +677,178 @@ Please verify the document is clear and try again, or manually enter the details
                     lines.append(f"  • {item}")
 
         lines.append("\n✅ *Please verify these details are correct.*")
+        return "\n".join(lines)
 
+    def _format_purchase_order(self, data: Dict[str, Any]) -> str:
+        """Format purchase order extraction."""
+        lines = ["📄 **Purchase Order Extracted**\n"]
+
+        if data.get("po_number"):
+            lines.append(f"**PO Number:** {data['po_number']}")
+        if data.get("po_date"):
+            lines.append(f"**PO Date:** {data['po_date']}")
+        if data.get("buyer_name"):
+            lines.append(f"**Buyer:** {data['buyer_name']}")
+        if data.get("seller_name"):
+            lines.append(f"**Supplier:** {data['seller_name']}")
+        if data.get("total_amount"):
+            lines.append(f"**Total Value:** ₹{data['total_amount']}")
+        if data.get("delivery_date"):
+            lines.append(f"**Delivery Date:** {data['delivery_date']}")
+        if data.get("payment_terms"):
+            lines.append(f"**Payment Terms:** {data['payment_terms']}")
+
+        lines.append("\n✅ *Please verify these details are correct.*")
+        return "\n".join(lines)
+
+    def _format_msme_certificate(self, data: Dict[str, Any]) -> str:
+        """Format MSME/Udyam certificate extraction."""
+        lines = ["📄 **MSME/Udyam Certificate Extracted**\n"]
+
+        if data.get("udyam_registration_number"):
+            lines.append(f"**Udyam Number:** {data['udyam_registration_number']}")
+        if data.get("enterprise_name"):
+            lines.append(f"**Enterprise Name:** {data['enterprise_name']}")
+        if data.get("enterprise_type"):
+            lines.append(f"**Category:** {data['enterprise_type']}")
+        if data.get("owner_name"):
+            lines.append(f"**Owner:** {data['owner_name']}")
+        if data.get("date_of_registration"):
+            lines.append(f"**Registration Date:** {data['date_of_registration']}")
+        if data.get("major_activity"):
+            lines.append(f"**Activity:** {data['major_activity']}")
+        if data.get("state"):
+            lines.append(f"**State:** {data['state']}")
+        if data.get("district"):
+            lines.append(f"**District:** {data['district']}")
+
+        lines.append("\n✅ *Please verify these details are correct.*")
+        return "\n".join(lines)
+
+    def _format_delivery_proof(self, data: Dict[str, Any]) -> str:
+        """Format delivery receipt extraction."""
+        lines = ["📄 **Delivery Proof Extracted**\n"]
+
+        if data.get("delivery_date"):
+            lines.append(f"**Delivery Date:** {data['delivery_date']}")
+        if data.get("delivery_challan_number"):
+            lines.append(f"**Challan Number:** {data['delivery_challan_number']}")
+        if data.get("sender_name"):
+            lines.append(f"**Sender:** {data['sender_name']}")
+        if data.get("recipient_company"):
+            lines.append(f"**Recipient:** {data['recipient_company']}")
+        if data.get("receiver_name"):
+            lines.append(f"**Received By:** {data['receiver_name']}")
+        if data.get("receiver_signature"):
+            lines.append(f"**Signature Present:** {'Yes' if data['receiver_signature'] else 'No'}")
+        if data.get("vehicle_number"):
+            lines.append(f"**Vehicle:** {data['vehicle_number']}")
+
+        items = data.get("items_delivered", [])
+        if items:
+            lines.append("\n**Items Delivered:**")
+            for item in items[:5]:
+                lines.append(f"  • {item}")
+
+        lines.append("\n✅ *Please verify these details are correct.*")
+        return "\n".join(lines)
+
+    def _format_communication(self, data: Dict[str, Any]) -> str:
+        """Format email/communication extraction."""
+        lines = ["📄 **Communication Record Extracted**\n"]
+
+        if data.get("date"):
+            lines.append(f"**Date:** {data['date']}")
+        if data.get("from"):
+            lines.append(f"**From:** {data['from']}")
+        if data.get("to"):
+            lines.append(f"**To:** {data['to']}")
+        if data.get("subject"):
+            lines.append(f"**Subject:** {data['subject']}")
+        if data.get("amount_mentioned"):
+            lines.append(f"**Amount Mentioned:** ₹{data['amount_mentioned']}")
+        if data.get("deadline_mentioned"):
+            lines.append(f"**Deadline:** {data['deadline_mentioned']}")
+        if data.get("tone"):
+            lines.append(f"**Tone:** {data['tone']}")
+
+        key_points = data.get("key_points", [])
+        if key_points:
+            lines.append("\n**Key Points:**")
+            for point in key_points[:5]:
+                lines.append(f"  • {point}")
+
+        lines.append("\n✅ *Please verify these details are correct.*")
+        return "\n".join(lines)
+
+    def _format_bank_statement(self, data: Dict[str, Any]) -> str:
+        """Format bank statement extraction."""
+        lines = ["📄 **Bank Statement Extracted**\n"]
+
+        if data.get("bank_name"):
+            lines.append(f"**Bank:** {data['bank_name']}")
+        if data.get("account_holder_name"):
+            lines.append(f"**Account Holder:** {data['account_holder_name']}")
+        if data.get("account_number"):
+            lines.append(f"**Account Number:** {data['account_number']}")
+        if data.get("statement_period"):
+            lines.append(f"**Period:** {data['statement_period']}")
+        if data.get("opening_balance"):
+            lines.append(f"**Opening Balance:** ₹{data['opening_balance']}")
+        if data.get("closing_balance"):
+            lines.append(f"**Closing Balance:** ₹{data['closing_balance']}")
+
+        lines.append("\n✅ *Please verify these details are correct.*")
+        return "\n".join(lines)
+
+    def _format_legal_notice(self, data: Dict[str, Any]) -> str:
+        """Format legal notice extraction."""
+        lines = ["📄 **Legal Notice Extracted**\n"]
+
+        if data.get("notice_date"):
+            lines.append(f"**Notice Date:** {data['notice_date']}")
+        if data.get("from_party"):
+            lines.append(f"**From:** {data['from_party']}")
+        if data.get("to_party"):
+            lines.append(f"**To:** {data['to_party']}")
+        if data.get("lawyer_name"):
+            lines.append(f"**Advocate:** {data['lawyer_name']}")
+        if data.get("amount_claimed"):
+            lines.append(f"**Amount Claimed:** ₹{data['amount_claimed']}")
+        if data.get("deadline_given"):
+            lines.append(f"**Response Deadline:** {data['deadline_given']}")
+        if data.get("subject_matter"):
+            lines.append(f"**Subject:** {data['subject_matter']}")
+
+        sections = data.get("legal_sections_cited", [])
+        if sections:
+            lines.append(f"**Sections Cited:** {', '.join(sections) if isinstance(sections, list) else sections}")
+
+        lines.append("\n✅ *Please verify these details are correct.*")
+        return "\n".join(lines)
+
+    def _format_generic(self, data: Dict[str, Any]) -> str:
+        """Format generic document extraction."""
+        lines = ["📄 **Document Extracted**\n"]
+
+        if data.get("document_type"):
+            lines.append(f"**Type:** {data['document_type']}")
+        if data.get("date"):
+            lines.append(f"**Date:** {data['date']}")
+        if data.get("parties"):
+            parties = data['parties']
+            if isinstance(parties, list):
+                lines.append(f"**Parties:** {', '.join(parties)}")
+            else:
+                lines.append(f"**Parties:** {parties}")
+        if data.get("amounts"):
+            lines.append(f"**Amounts:** {data['amounts']}")
+        if data.get("reference_numbers"):
+            lines.append(f"**References:** {data['reference_numbers']}")
+        if data.get("key_details"):
+            lines.append(f"**Details:** {data['key_details']}")
+
+        lines.append("\n✅ *Please verify these details are correct.*")
         return "\n".join(lines)
 
 

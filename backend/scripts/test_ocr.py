@@ -19,16 +19,25 @@ from api.services.ocr_service import get_ocr_service, get_ocr_system
 
 def test_ocr_availability():
     """Test if OCR system is available."""
-    print("=== OCR System Availability Test ===\n")
+    print("=== Tesseract OCR Availability Test ===\n")
 
-    ocr = get_ocr_system()
+    available = get_ocr_system()
 
-    if ocr == "fallback":
-        print("❌ IndicPhotoOCR NOT available")
-        print("   Install with: pip install indicphotoocr")
+    if not available:
+        print("❌ Tesseract NOT available")
+        print("   Install with: sudo apt install tesseract-ocr tesseract-ocr-eng tesseract-ocr-hin tesseract-ocr-kan")
         return False
     else:
-        print("✅ IndicPhotoOCR is available!")
+        print("✅ Tesseract OCR is available!")
+
+        # Check available languages
+        try:
+            import pytesseract
+            langs = pytesseract.get_languages()
+            print(f"   Available languages: {', '.join(langs)}")
+        except Exception as e:
+            print(f"   Could not list languages: {e}")
+
         return True
 
 
@@ -86,28 +95,43 @@ def create_test_image():
         from PIL import Image, ImageDraw, ImageFont
 
         # Create a simple invoice-like image
-        img = Image.new('RGB', (400, 300), color='white')
+        img = Image.new('RGB', (500, 400), color='white')
         draw = ImageDraw.Draw(img)
 
+        # Try to use a better font, fall back to default
+        try:
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 16)
+            font_large = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 24)
+        except:
+            font = ImageFont.load_default()
+            font_large = font
+
         # Add text
+        draw.text((180, 20), "INVOICE", fill='black', font=font_large)
+
         text_lines = [
-            "INVOICE",
             "Invoice No: INV-2024-001",
             "Date: 15-01-2024",
             "",
-            "From: ABC Traders",
+            "From: ABC Traders Pvt Ltd",
             "GSTIN: 29ABCDE1234F1Z5",
             "",
             "To: XYZ Enterprises",
+            "GSTIN: 27XYZAB5678G2H3",
             "",
-            "Amount: Rs. 50,000",
+            "Item: Industrial Parts",
+            "Quantity: 100 units @ Rs. 500",
+            "",
+            "Subtotal: Rs. 50,000",
             "GST (18%): Rs. 9,000",
             "Total: Rs. 59,000",
+            "",
+            "Payment Due: 15-02-2024",
         ]
 
-        y = 20
+        y = 60
         for line in text_lines:
-            draw.text((20, y), line, fill='black')
+            draw.text((30, y), line, fill='black', font=font)
             y += 22
 
         # Save
@@ -124,7 +148,7 @@ def create_test_image():
 
 def main():
     print("=" * 60)
-    print("        IndicPhotoOCR (Bhashini) Test Script")
+    print("           Tesseract OCR Test Script")
     print("=" * 60)
 
     # Test 1: Check availability

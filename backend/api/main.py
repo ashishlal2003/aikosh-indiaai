@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 import os
 from api.routes.speech_to_text import router as speech_to_text_router
 from api.routes.chat import router as chat_router
+from api.routes.documents import router as documents_router
 load_dotenv()
 
 app = FastAPI(
@@ -22,6 +23,7 @@ app.add_middleware(
 
 app.include_router(speech_to_text_router, prefix="/api", tags=["Speech to Text"])
 app.include_router(chat_router, prefix="/api", tags=["Chat"])
+app.include_router(documents_router, prefix="/api", tags=["Documents"])
 
 @app.get("/health")
 def health():

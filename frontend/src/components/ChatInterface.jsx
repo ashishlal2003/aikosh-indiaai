@@ -10,13 +10,14 @@ export default function ChatInterface() {
       id: 1,
       role: 'assistant',
       type: 'text',
-      content: "Hi! I'm here to help you file an MSME payment dispute. Tell me about your issue - you can type or use voice to speak in any language.",
+      content: "Namaste! I'm Saathi (साथी), your AI Dispute Resolution Assistant from MoMSME, Government of India. I'm here to help you recover your delayed payments under the MSMED Act. Tell me about your payment dispute - you can type or speak in any language.",
       timestamp: new Date().toISOString(),
     }
   ]);
   const [isLoading, setIsLoading] = useState(false);
   const [conversationId, setConversationId] = useState(null);
   const messagesEndRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -127,6 +128,38 @@ export default function ChatInterface() {
     }
   };
 
+  // Handle action button clicks
+  const handleActionClick = (actionType) => {
+    const actionLower = actionType.toLowerCase();
+
+    // Upload document actions
+    if (actionLower.includes('upload') || actionLower.includes('document')) {
+      fileInputRef.current?.click();
+      return;
+    }
+
+    // Draft email action - send as user message
+    if (actionLower.includes('draft') || actionLower.includes('email')) {
+      handleSendTextMessage('Please draft an email to the buyer requesting payment');
+      return;
+    }
+
+    // Calculate interest action
+    if (actionLower.includes('interest') || actionLower.includes('calculate')) {
+      handleSendTextMessage('Calculate the interest I am owed under MSMED Act Section 15');
+      return;
+    }
+
+    // File complaint / ODR action
+    if (actionLower.includes('file') || actionLower.includes('complaint') || actionLower.includes('odr')) {
+      handleSendTextMessage('How do I file a complaint with the MSME Facilitation Council?');
+      return;
+    }
+
+    // Default: send as question
+    handleSendTextMessage(actionType);
+  };
+
   const getAIResponse = async (userMessage, messageType, documentData = null) => {
     setIsLoading(true);
 
@@ -156,12 +189,18 @@ export default function ChatInterface() {
         message_type: messageType
       });
 
+      // Map backend actions to frontend handlers
+      const mappedActions = (response.actions || []).map(action => ({
+        label: action.label,
+        onClick: () => handleActionClick(action.action || action.label),
+      }));
+
       // Add AI response
       addMessage({
         role: 'assistant',
         type: 'text',
         content: response.response,
-        actions: response.actions || [],
+        actions: mappedActions,
       });
 
     } catch (error) {
@@ -176,12 +215,31 @@ export default function ChatInterface() {
     }
   };
 
+  // Handle file selection from action buttons
+  const handleFileSelect = (event) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      handleUploadDocument(file);
+    }
+    // Reset input so same file can be selected again
+    event.target.value = '';
+  };
+
   return (
     <div className="flex flex-col h-[600px] bg-white rounded-xl shadow-lg overflow-hidden">
+      {/* Hidden file input for action buttons */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleFileSelect}
+        accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+        className="hidden"
+      />
+
       {/* Chat Header */}
       <div className="bg-blue-500 text-white px-6 py-4">
-        <h2 className="text-xl font-semibold">MSME Dispute Assistant</h2>
-        <p className="text-sm text-blue-100 mt-1">Powered by AI - Ask me anything in any language</p>
+        <h2 className="text-xl font-semibold">Saathi (साथी)</h2>
+        <p className="text-sm text-blue-100 mt-1">MoMSME Dispute Resolution Assistant - Speak in any language</p>
       </div>
 
       {/* Messages Area */}

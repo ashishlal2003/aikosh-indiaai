@@ -1,0 +1,18 @@
+{
+    "configurations": [
+        {
+            "name": "Python: FastAPI",
+            "type": "python",
+            "request": "launch",
+            "module": "uvicorn",
+            "cwd": "${workspaceFolder}/backend",
+            "args": [
+                "api.main:app",
+                "--reload"
+            ],
+            "jinja": true,
+            "justMyCode": true,
+            "python": "${workspaceFolder}/backend/venv/bin/python"
+        }
+    ]
+}
