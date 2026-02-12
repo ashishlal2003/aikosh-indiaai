@@ -92,15 +92,19 @@ class DisputeDocumentResponse(BaseModel):
 class DocumentCompleteness(BaseModel):
     """Model for document completeness check result."""
     conversation_id: str
-    total_required: int = Field(default=5, description="Total required doc types")
+    total_required: int = Field(default=4, description="Total required doc types")
     uploaded_count: int = Field(default=0, description="Number uploaded")
-    completeness_percentage: float = Field(default=0.0, description="Completion %")
+    completeness_percentage: float = Field(default=0.0, description="Completion % based on verified docs")
     uploaded_types: list[str] = Field(default_factory=list)
     missing_types: list[str] = Field(default_factory=list)
     verified_count: int = Field(default=0, description="Verified documents")
     status_summary: Dict[str, int] = Field(
         default_factory=dict,
         description="Count by verification status"
+    )
+    per_document: Dict[str, str] = Field(
+        default_factory=dict,
+        description="Status per required document type: verified/pending/rejected/missing"
     )
 
 
@@ -110,10 +114,10 @@ REQUIRED_DOCUMENT_TYPES = [
     DocumentType.PURCHASE_ORDER,
     DocumentType.DELIVERY_PROOF,
     DocumentType.MSME_CERTIFICATE,
-    DocumentType.COMMUNICATION,
 ]
 
 OPTIONAL_DOCUMENT_TYPES = [
+    DocumentType.COMMUNICATION,  # Helpful but not mandatory
     DocumentType.BANK_STATEMENT,
     DocumentType.LEGAL_NOTICE,
     DocumentType.OTHER,

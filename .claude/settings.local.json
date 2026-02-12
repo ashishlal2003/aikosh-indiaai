@@ -21,7 +21,13 @@
       "Bash(source:*)",
       "Bash(python -m scripts.test_ocr:*)",
       "Bash(pip install:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "WebSearch",
+      "WebFetch(domain:console.groq.com)",
+      "Bash(/home/ashish/aikosh-indiaai/backend/venv/bin/python:*)",
+      "mcp__ide__getDiagnostics",
+      "Bash(npx vite build)",
+      "WebFetch(domain:github.com)"
     ]
   }
 }

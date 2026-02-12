@@ -1,11 +1,26 @@
-import { Bot, User, Paperclip, Volume2 } from 'lucide-react';
+import { Bot, User, Paperclip, Volume2, Wrench } from 'lucide-react';
 import { useState, useRef } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
+import EmailDraft from './EmailDraft';
 
-export default function ChatMessage({ message }) {
+export default function ChatMessage({ message, conversationId, onEmailSent }) {
   const [isPlaying, setIsPlaying] = useState(false);
   const audioRef = useRef(null);
 
   const isAI = message.role === 'assistant';
+
+  // Get friendly tool name for display
+  const getToolDisplayName = (toolName) => {
+    const toolNames = {
+      'calculate_msme_interest': 'Calculating interest',
+      'verify_document': 'Verifying document',
+      'draft_demand_notice_email': 'Drafting email',
+      'get_current_date': 'Getting current date',
+    };
+    return toolNames[toolName] || 'Processing';
+  };
 
   const toggleAudio = () => {
     if (audioRef.current) {
@@ -20,23 +35,88 @@ export default function ChatMessage({ message }) {
   };
 
   return (
-    <div className={`flex gap-3 ${isAI ? 'justify-start' : 'justify-end'} mb-4`}>
+    <div className={`flex gap-3 ${isAI ? 'justify-start' : 'justify-end'}`}>
       {isAI && (
-        <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center flex-shrink-0">
+        <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-orange-500 to-pink-500 flex items-center justify-center flex-shrink-0 shadow-lg shadow-orange-500/20">
           <Bot className="w-5 h-5 text-white" />
         </div>
       )}
 
       <div className={`max-w-[70%] ${isAI ? '' : 'order-1'}`}>
         <div
-          className={`rounded-lg px-4 py-3 ${
+          className={`rounded-2xl px-5 py-3.5 backdrop-blur-xl border transition-all duration-300 ${
             isAI
-              ? 'bg-gray-100 text-gray-900'
-              : 'bg-blue-500 text-white'
+              ? 'bg-white/5 border-white/10 text-gray-100 hover:bg-white/10'
+              : 'bg-gradient-to-r from-orange-500 to-pink-500 border-white/20 text-white shadow-lg shadow-orange-500/20'
           }`}
         >
+          {/* Tool execution indicator */}
+          {message.toolExecuting && (
+            <div className="mb-2 flex items-center gap-2 px-3 py-2 bg-orange-500/10 border border-orange-500/30 rounded-lg">
+              <Wrench className="w-4 h-4 text-orange-400 animate-pulse" />
+              <span className="text-xs text-orange-300 font-medium">
+                {getToolDisplayName(message.toolExecuting)}...
+              </span>
+            </div>
+          )}
+
           {message.type === 'text' && (
-            <p className="whitespace-pre-wrap break-words">{message.content}</p>
+            <div className="prose prose-sm max-w-none break-words prose-invert">
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                rehypePlugins={[rehypeRaw]}
+                components={{
+                  // Style paragraphs
+                  p: ({ node, ...props }) => <p className="mb-2 last:mb-0 text-inherit" {...props} />,
+                  // Style lists
+                  ul: ({ node, ...props }) => <ul className="list-disc ml-4 mb-2 text-inherit" {...props} />,
+                  ol: ({ node, ...props }) => <ol className="list-decimal ml-4 mb-2 text-inherit" {...props} />,
+                  li: ({ node, ...props }) => <li className="mb-1 text-inherit" {...props} />,
+                  // Style links
+                  a: ({ node, ...props }) => (
+                    <a
+                      className={`${
+                        isAI ? 'text-orange-400 hover:text-orange-300' : 'text-white hover:text-gray-100'
+                      } underline underline-offset-2`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      {...props}
+                    />
+                  ),
+                  // Style code blocks
+                  code: ({ node, inline, ...props }) =>
+                    inline ? (
+                      <code className="bg-white/10 px-1.5 py-0.5 rounded text-sm font-mono text-inherit" {...props} />
+                    ) : (
+                      <code className="block bg-white/10 p-3 rounded-lg text-sm font-mono overflow-x-auto text-inherit my-2" {...props} />
+                    ),
+                  // Style headings
+                  h1: ({ node, ...props }) => <h1 className="text-xl font-bold mb-2 text-inherit" {...props} />,
+                  h2: ({ node, ...props }) => <h2 className="text-lg font-bold mb-2 text-inherit" {...props} />,
+                  h3: ({ node, ...props }) => <h3 className="text-base font-bold mb-1 text-inherit" {...props} />,
+                  // Style blockquotes
+                  blockquote: ({ node, ...props }) => (
+                    <blockquote className="border-l-4 border-orange-400/50 pl-3 italic my-2 text-inherit" {...props} />
+                  ),
+                  // Style horizontal rules
+                  hr: ({ node, ...props }) => <hr className="my-3 border-white/20" {...props} />,
+                  // Style tables
+                  table: ({ node, ...props }) => (
+                    <table className="border-collapse border border-white/20 my-2 text-inherit" {...props} />
+                  ),
+                  th: ({ node, ...props }) => (
+                    <th className="border border-white/20 px-2 py-1 bg-white/5 font-semibold text-inherit" {...props} />
+                  ),
+                  td: ({ node, ...props }) => <td className="border border-white/20 px-2 py-1 text-inherit" {...props} />,
+                }}
+              >
+                {message.content}
+              </ReactMarkdown>
+              {/* Streaming cursor */}
+              {message.isStreaming && (
+                <span className="inline-block w-1.5 h-4 bg-orange-400 ml-0.5 animate-pulse"></span>
+              )}
+            </div>
           )}
 
           {message.type === 'voice' && (
@@ -44,8 +124,10 @@ export default function ChatMessage({ message }) {
               <div className="flex items-center gap-2">
                 <button
                   onClick={toggleAudio}
-                  className={`p-2 rounded-full ${
-                    isAI ? 'bg-gray-200 hover:bg-gray-300' : 'bg-blue-600 hover:bg-blue-700'
+                  className={`p-2 rounded-lg transition-all duration-300 ${
+                    isAI
+                      ? 'bg-white/10 hover:bg-white/20'
+                      : 'bg-white/20 hover:bg-white/30'
                   }`}
                 >
                   <Volume2 className="w-4 h-4" />
@@ -75,7 +157,7 @@ export default function ChatMessage({ message }) {
               {message.extractedData && (
                 <div className="mt-2 text-sm opacity-90">
                   <p className="font-semibold">Extracted info:</p>
-                  <pre className="mt-1 whitespace-pre-wrap">{message.extractedData}</pre>
+                  <pre className="mt-1 whitespace-pre-wrap bg-white/5 p-2 rounded-lg">{message.extractedData}</pre>
                 </div>
               )}
             </div>
@@ -87,7 +169,7 @@ export default function ChatMessage({ message }) {
                 <button
                   key={idx}
                   onClick={() => action.onClick && action.onClick()}
-                  className="w-full bg-white text-blue-600 px-3 py-2 rounded text-sm font-medium hover:bg-gray-50 transition-colors"
+                  className="w-full bg-white/10 backdrop-blur-lg border border-white/20 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-white/20 transition-all duration-300"
                 >
                   {action.label}
                 </button>
@@ -96,7 +178,15 @@ export default function ChatMessage({ message }) {
           )}
         </div>
 
-        <div className={`text-xs text-gray-500 mt-1 ${isAI ? 'text-left' : 'text-right'}`}>
+        {message.emailDraft && (
+          <EmailDraft
+            emailDraft={message.emailDraft}
+            conversationId={conversationId}
+            onEmailSent={onEmailSent}
+          />
+        )}
+
+        <div className={`text-xs text-gray-400 mt-1.5 ${isAI ? 'text-left' : 'text-right'}`}>
           {new Date(message.timestamp).toLocaleTimeString([], {
             hour: '2-digit',
             minute: '2-digit'
@@ -105,8 +195,8 @@ export default function ChatMessage({ message }) {
       </div>
 
       {!isAI && (
-        <div className="w-8 h-8 rounded-full bg-gray-600 flex items-center justify-center flex-shrink-0">
-          <User className="w-5 h-5 text-white" />
+        <div className="w-9 h-9 rounded-xl bg-white/10 backdrop-blur-lg border border-white/20 flex items-center justify-center flex-shrink-0">
+          <User className="w-5 h-5 text-gray-300" />
         </div>
       )}
     </div>

@@ -114,19 +114,19 @@ export default function ChatInput({ onSendMessage, onSendVoice, onUploadDocument
   };
 
   return (
-    <div className="border-t border-gray-200 bg-white p-4">
+    <div className="border-t border-white/10 bg-white/5 backdrop-blur-xl p-4">
       {isRecording && (
-        <div className="mb-3 flex items-center justify-between bg-red-50 border border-red-200 rounded-lg p-3">
+        <div className="mb-3 flex items-center justify-between bg-red-500/10 border border-red-500/20 rounded-xl p-3 backdrop-blur-lg">
           <div className="flex items-center gap-3">
-            <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
-            <span className="text-sm text-gray-700">Recording...</span>
-            <span className="text-sm font-mono font-bold text-gray-900">
+            <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse shadow-lg shadow-red-500/50"></div>
+            <span className="text-sm text-gray-200">Recording...</span>
+            <span className="text-sm font-mono font-bold text-white">
               {formatTime(recordingTime)}
             </span>
           </div>
           <button
             onClick={stopRecording}
-            className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
+            className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-all duration-300 shadow-lg shadow-red-500/20"
           >
             <Square className="w-4 h-4" fill="currentColor" />
             <span>Stop</span>
@@ -146,7 +146,7 @@ export default function ChatInput({ onSendMessage, onSendVoice, onUploadDocument
         <button
           onClick={() => fileInputRef.current?.click()}
           disabled={disabled || isRecording || isUploading}
-          className="p-3 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="p-3 text-gray-400 hover:text-white hover:bg-white/10 rounded-xl transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed border border-white/10"
           title="Upload document"
         >
           {isUploading ? (
@@ -156,7 +156,7 @@ export default function ChatInput({ onSendMessage, onSendVoice, onUploadDocument
           )}
         </button>
 
-        <div className="flex-1 bg-gray-100 rounded-lg px-4 py-2">
+        <div className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 backdrop-blur-lg">
           <textarea
             ref={textareaRef}
             value={message}
@@ -164,7 +164,7 @@ export default function ChatInput({ onSendMessage, onSendVoice, onUploadDocument
             onKeyPress={handleKeyPress}
             placeholder="Type your message or use voice..."
             disabled={disabled || isRecording}
-            className="w-full bg-transparent border-none outline-none resize-none max-h-32 disabled:opacity-50"
+            className="w-full bg-transparent border-none outline-none resize-none max-h-32 disabled:opacity-50 text-white placeholder-gray-400"
             rows={1}
           />
         </div>
@@ -173,7 +173,7 @@ export default function ChatInput({ onSendMessage, onSendVoice, onUploadDocument
           <button
             onClick={handleSend}
             disabled={disabled || isRecording}
-            className="p-3 bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="p-3 bg-gradient-to-r from-orange-500 to-pink-500 hover:from-orange-600 hover:to-pink-600 text-white rounded-xl transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-orange-500/20"
             title="Send message"
           >
             <Send className="w-5 h-5" />
@@ -182,10 +182,10 @@ export default function ChatInput({ onSendMessage, onSendVoice, onUploadDocument
           <button
             onClick={isRecording ? stopRecording : startRecording}
             disabled={disabled}
-            className={`p-3 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+            className={`p-3 rounded-xl transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg ${
               isRecording
-                ? 'bg-red-500 hover:bg-red-600 text-white'
-                : 'bg-blue-500 hover:bg-blue-600 text-white'
+                ? 'bg-red-500 hover:bg-red-600 text-white shadow-red-500/20'
+                : 'bg-gradient-to-r from-orange-500 to-pink-500 hover:from-orange-600 hover:to-pink-600 text-white shadow-orange-500/20'
             }`}
             title={isRecording ? 'Stop recording' : 'Start voice recording'}
           >

@@ -1,16 +1,32 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
+import logging
 import os
 from api.routes.speech_to_text import router as speech_to_text_router
 from api.routes.chat import router as chat_router
 from api.routes.documents import router as documents_router
+from api.services.rag_service import get_rag_service
+
 load_dotenv()
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Load heavy models at startup so the first request isn't slow."""
+    logger.info("Loading RAG embedding model...")
+    get_rag_service()._ensure_loaded()
+    logger.info("RAG model ready.")
+    yield
+
 
 app = FastAPI(
     title="MSME ODR Assistant API",
     description="AI-powered conversational assistant for MSME dispute resolution",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(

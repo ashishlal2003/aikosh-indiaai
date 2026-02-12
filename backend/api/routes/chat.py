@@ -3,13 +3,16 @@ Chat routes for conversational AI interface.
 """
 
 from fastapi import APIRouter, File, UploadFile, Form, HTTPException
+from fastapi.responses import StreamingResponse
 from typing import Optional, List
 
 from api.controllers.chat import (
     ChatController,
     ChatRequest,
     ChatResponse,
-    DocumentUploadResponse
+    DocumentUploadResponse,
+    SendEmailRequest,
+    SendEmailResponse,
 )
 from api.models.conversation import (
     ConversationResponse,
@@ -36,6 +39,47 @@ async def chat(request: ChatRequest):
         ChatResponse with AI's response and actions
     """
     return chat_controller.process_chat_message(request)
+
+
+@router.post("/chat/stream")
+async def chat_stream(request: ChatRequest):
+    """
+    Process chat message and stream AI response token-by-token.
+
+    Tool calls are executed server-side and show status updates.
+    Final text response is streamed to the client in real-time.
+
+    Args:
+        request: ChatRequest with conversation history
+
+    Returns:
+        StreamingResponse with Server-Sent Events (SSE)
+    """
+    return StreamingResponse(
+        chat_controller.process_chat_message_stream(request),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        }
+    )
+
+
+@router.post("/chat/send-email", response_model=SendEmailResponse)
+async def send_email(request: SendEmailRequest):
+    """
+    Send a previously drafted email to the buyer.
+
+    Called when the user approves a draft email by clicking 'Send Email'.
+
+    Args:
+        request: SendEmailRequest with to_email, subject, body_html, conversation_id
+
+    Returns:
+        SendEmailResponse with send status
+    """
+    return chat_controller.send_email_to_buyer(request)
 
 
 @router.post("/chat/upload-document", response_model=DocumentUploadResponse)

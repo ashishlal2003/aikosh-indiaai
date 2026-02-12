@@ -1,12 +1,12 @@
 """
 Speech-to-text controller for handling audio transcription.
-Integrates Groq Whisper API with database storage.
+Integrates OpenAI Whisper API with database storage.
 Uses the conversations/messages schema for chat integration.
 """
 
 from dotenv import load_dotenv
 import os
-import requests
+from openai import OpenAI
 from fastapi import HTTPException, File, UploadFile
 
 from api.daos.conversation_dao import MessageDAO
@@ -33,7 +33,7 @@ class SpeechToTextController:
     def __init__(self):
         """Initialize controller with API credentials and DAOs."""
         load_dotenv()
-        self.groq_api_key = os.getenv("GROQ_API_KEY")
+        self.openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         self.max_file_size = int(os.getenv("MAX_FILE_SIZE", 10 * 1024 * 1024))
         self.message_dao = MessageDAO()
 
@@ -41,6 +41,7 @@ class SpeechToTextController:
         self,
         file: UploadFile = File(...),
         conversation_id: str = None,
+        language: str = None,
     ) -> VoiceMessageResponse:
         """
         Transcribe audio file and save to messages table.
@@ -49,6 +50,7 @@ class SpeechToTextController:
         Args:
             file: Uploaded audio file
             conversation_id: Conversation ID (e.g., "conv_1769865449664_icv7di7ih")
+            language: Language hint for Whisper (e.g., "en", "hi", "kn")
 
         Returns:
             VoiceMessageResponse: Contains transcription text and message record
@@ -78,8 +80,8 @@ class SpeechToTextController:
                 detail=f"File too large. Maximum size: {max_size_mb}MB",
             )
 
-        # Transcribe with Groq Whisper
-        transcription_text = self._call_groq_api(file)
+        # Transcribe with OpenAI Whisper
+        transcription_result = self._call_openai_whisper(file, language)
 
         # Save to messages table
         try:
@@ -87,19 +89,19 @@ class SpeechToTextController:
                 conversation_id=conversation_id,
                 message_type=MessageType.USER_VOICE,
                 role=MessageRole.USER,
-                content=transcription_text,
-                transcription_text=transcription_text,
+                content=transcription_result["text"],
+                transcription_text=transcription_result["text"],
                 audio_filename=file.filename,
                 audio_file_size_bytes=file.size,
                 audio_content_type=file.content_type,
-                transcription_model="whisper-large-v3-turbo",
-                detected_language="en",
+                transcription_model="whisper-1",
+                detected_language=transcription_result.get("language", language or "en"),
             )
 
             message_record = self.message_dao.create_message(message_create)
 
             return VoiceMessageResponse(
-                text=transcription_text,
+                text=transcription_result["text"],
                 message=message_record,
             )
 
@@ -109,49 +111,51 @@ class SpeechToTextController:
                 detail=f"Failed to save voice message to database: {str(e)}",
             )
 
-    def _call_groq_api(self, file: UploadFile) -> str:
+    def _call_openai_whisper(self, file: UploadFile, language: str = None) -> dict:
         """
-        Call Groq Whisper API for transcription.
+        Call OpenAI Whisper API for transcription.
 
         Args:
             file: Audio file to transcribe
+            language: Optional language hint (ISO 639-1 code: en, hi, kn, ta)
 
         Returns:
-            str: Transcribed text
+            dict: Response containing "text" and optionally "language"
 
         Raises:
             HTTPException: If API call fails
         """
-        url = "https://api.groq.com/openai/v1/audio/transcriptions"
-
-        headers = {"Authorization": f"Bearer {self.groq_api_key}"}
-
-        data = {"model": "whisper-large-v3-turbo"}
-
-        files = {"file": (file.filename, file.file, file.content_type)}
-
         try:
-            response = requests.post(url, headers=headers, data=data, files=files)
-            response.raise_for_status()
-            result = response.json()
+            # Reset file pointer to beginning
+            file.file.seek(0)
 
-            if "text" not in result:
-                raise HTTPException(
-                    status_code=500,
-                    detail="Invalid response from transcription API",
-                )
+            # Prepare transcription parameters
+            transcribe_params = {
+                "model": "whisper-1",
+                "file": (file.filename, file.file, file.content_type),
+            }
 
-            return result["text"]
+            # Add language hint if provided
+            if language:
+                transcribe_params["language"] = language
 
-        except requests.exceptions.RequestException as e:
-            error_detail = str(e)
-            if hasattr(e, "response") and e.response is not None:
-                try:
-                    error_detail = e.response.json()
-                except Exception:
-                    error_detail = e.response.text or str(e)
+                # Add script prompt to guide Whisper to use correct script
+                # This helps prevent Kannada being transcribed in Devanagari
+                if language == "kn":
+                    transcribe_params["prompt"] = "ನನಗೆ ಕನ್ನಡ ಗೊತ್ತಿದೆ"  # "I know Kannada" in Kannada script
+                elif language == "hi":
+                    transcribe_params["prompt"] = "मुझे हिंदी आती है"  # "I know Hindi" in Devanagari
 
+            # Call OpenAI Whisper
+            transcript = self.openai_client.audio.transcriptions.create(**transcribe_params)
+
+            return {
+                "text": transcript.text,
+                "language": language  # OpenAI doesn't return detected language, use provided
+            }
+
+        except Exception as e:
             raise HTTPException(
                 status_code=500,
-                detail=f"Transcription API failed: {error_detail}",
+                detail=f"OpenAI Whisper transcription failed: {str(e)}",
             )

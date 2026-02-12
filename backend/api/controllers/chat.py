@@ -2,15 +2,19 @@
 Chat controller for handling conversational AI interactions.
 Now integrated with the new conversations/messages schema.
 Uses Tesseract OCR for document text extraction.
+Supports agentic tool calling (email drafting, interest calculation).
 """
 
+import logging
 import os
 import tempfile
-from typing import List, Dict, Optional
+import json
+from typing import List, Dict, Optional, Any, AsyncGenerator
 from fastapi import HTTPException, File, UploadFile
 from pydantic import BaseModel
 
 from api.services.conversation_service import ConversationService
+from api.services.email_service import send_email
 from api.services.ocr_service import get_ocr_service
 from api.daos.conversation_dao import ConversationDAO, MessageDAO
 from api.daos.document_dao import DocumentDAO
@@ -23,6 +27,8 @@ from api.models.document import (
     DisputeDocumentCreate,
     DocumentType,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class ChatMessage(BaseModel):
@@ -43,6 +49,23 @@ class ChatResponse(BaseModel):
     response: str
     actions: List[Dict[str, str]] = []
     conversation_id: str
+    email_draft: Optional[Dict[str, Any]] = None
+    completeness: Optional[Dict[str, Any]] = None
+
+
+class SendEmailRequest(BaseModel):
+    """Request model for sending a drafted email."""
+    conversation_id: str
+    to_email: str
+    subject: str
+    body_html: str
+
+
+class SendEmailResponse(BaseModel):
+    """Response model for email send endpoint."""
+    status: str
+    message: str
+    timestamp: Optional[str] = None
 
 
 class DocumentUploadResponse(BaseModel):
@@ -50,6 +73,7 @@ class DocumentUploadResponse(BaseModel):
     extracted_data: str
     file_name: str
     conversation_id: str
+    completeness: Optional[Dict[str, Any]] = None
 
 
 class ChatController:
@@ -106,20 +130,27 @@ class ChatController:
                 message_type=request.message_type
             )
 
+            # Build metadata for the saved message
+            ai_metadata: Dict[str, Any] = {"actions": result["actions"]}
+            if result.get("email_draft"):
+                ai_metadata["email_draft"] = result["email_draft"]
+
             # Save AI response to database
             ai_message = MessageCreate(
                 conversation_id=request.conversation_id,
                 message_type=MessageType.AI_RESPONSE,
                 role=MessageRole.ASSISTANT,
                 content=result["response"],
-                metadata={"actions": result["actions"]},
+                metadata=ai_metadata,
             )
             self.message_dao.create_message(ai_message)
 
             return ChatResponse(
                 response=result["response"],
                 actions=result["actions"],
-                conversation_id=result["conversation_id"]
+                conversation_id=result["conversation_id"],
+                email_draft=result.get("email_draft"),
+                completeness=result.get("completeness"),
             )
 
         except Exception as e:
@@ -244,10 +275,18 @@ class ChatController:
                 if os.path.exists(tmp_path):
                     os.unlink(tmp_path)
 
+            # Fetch current completeness for progress bar update
+            try:
+                completeness = self.document_dao.get_completeness(conversation_id)
+                completeness_data = completeness.model_dump()
+            except Exception:
+                completeness_data = None
+
             return DocumentUploadResponse(
                 extracted_data=extracted_data,
                 file_name=file.filename,
-                conversation_id=conversation_id
+                conversation_id=conversation_id,
+                completeness=completeness_data,
             )
 
         except HTTPException:
@@ -294,3 +333,193 @@ class ChatController:
                 status_code=500,
                 detail=f"Error summarizing conversation: {str(e)}"
             )
+
+    def send_email_to_buyer(self, request: SendEmailRequest) -> SendEmailResponse:
+        """
+        Send a previously drafted email to the buyer.
+
+        Called when the user clicks 'Send Email' after reviewing a draft.
+        Logs the sent email as a message in the conversation.
+
+        Args:
+            request: SendEmailRequest with email details.
+
+        Returns:
+            SendEmailResponse with status.
+
+        Raises:
+            HTTPException: If sending fails.
+        """
+        try:
+            self.conversation_dao.get_or_create_conversation(request.conversation_id)
+
+            result = send_email(
+                to_email=request.to_email,
+                subject=request.subject,
+                body_html=request.body_html,
+                cc_user=True,
+            )
+
+            if result["status"] == "sent":
+                # Log sent email as a message in the conversation
+                email_message = MessageCreate(
+                    conversation_id=request.conversation_id,
+                    message_type=MessageType.ACTION,
+                    role=MessageRole.SYSTEM,
+                    content=f"[Email sent to {request.to_email}] Subject: {request.subject}",
+                    metadata={
+                        "action": "email_sent",
+                        "to_email": request.to_email,
+                        "subject": request.subject,
+                        "timestamp": result["timestamp"],
+                    },
+                )
+                self.message_dao.create_message(email_message)
+
+                return SendEmailResponse(
+                    status="sent",
+                    message=f"Email sent successfully to {request.to_email}",
+                    timestamp=result["timestamp"],
+                )
+
+            logger.error(f"Email send failed: {result.get('error')}")
+            raise HTTPException(
+                status_code=502,
+                detail=result.get("error", "Failed to send email"),
+            )
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error sending email: {str(e)}",
+            )
+
+    async def process_chat_message_stream(self, request: ChatRequest) -> AsyncGenerator[str, None]:
+        """
+        Process chat message and stream AI response token-by-token.
+
+        Emits Server-Sent Events (SSE) in the following format:
+        - event: tool_start, data: {"tool": "calculate_msme_interest", "args": {...}}
+        - event: tool_end, data: {"tool": "calculate_msme_interest", "result": {...}}
+        - event: message, data: {"content": "token"}
+        - event: done, data: {"actions": [...], "email_draft": {...}, "completeness": {...}}
+
+        Args:
+            request: ChatRequest with conversation history
+
+        Yields:
+            SSE-formatted strings for streaming to client
+
+        Raises:
+            HTTPException: If processing fails
+        """
+        try:
+            # Ensure conversation exists (get or create)
+            self.conversation_dao.get_or_create_conversation(request.conversation_id)
+
+            # Convert Pydantic models to dicts
+            messages_dict = [
+                {"role": msg.role, "content": msg.content}
+                for msg in request.messages
+            ]
+
+            # Save the latest user message to database (if it's a text message)
+            if request.message_type == "text" and len(request.messages) > 0:
+                latest_message = request.messages[-1]
+                if latest_message.role == "user":
+                    user_message = MessageCreate(
+                        conversation_id=request.conversation_id,
+                        message_type=MessageType.USER_TEXT,
+                        role=MessageRole.USER,
+                        content=latest_message.content,
+                    )
+                    self.message_dao.create_message(user_message)
+
+            # Stream AI response
+            full_response = ""
+            email_draft = None
+            completeness = None
+            actions = []
+
+            async for event in self.conversation_service.get_ai_response_stream(
+                messages=messages_dict,
+                conversation_id=request.conversation_id,
+                message_type=request.message_type
+            ):
+                event_type = event.get("type")
+
+                if event_type == "tool_start":
+                    # Emit tool execution start
+                    yield f"event: tool_start\ndata: {json.dumps(event['data'])}\n\n"
+
+                elif event_type == "tool_end":
+                    # Emit tool execution end
+                    yield f"event: tool_end\ndata: {json.dumps(event['data'])}\n\n"
+
+                    # Capture email draft if available
+                    if event['data'].get('tool') == 'draft_demand_notice_email':
+                        result = event['data'].get('result', {})
+                        if isinstance(result, str):
+                            try:
+                                result = json.loads(result)
+                            except:
+                                pass
+                        if isinstance(result, dict) and result.get('status') == 'drafted':
+                            email_draft = result
+
+                    # Capture completeness if available
+                    if event['data'].get('tool') == 'verify_document':
+                        result = event['data'].get('result', {})
+                        if isinstance(result, str):
+                            try:
+                                result = json.loads(result)
+                            except:
+                                pass
+                        if isinstance(result, dict):
+                            completeness = result
+
+                elif event_type == "content":
+                    # Stream content token
+                    token = event.get("content", "")
+                    full_response += token
+                    yield f"event: message\ndata: {json.dumps({'content': token})}\n\n"
+
+                elif event_type == "done":
+                    # Final event with metadata
+                    actions = event.get("actions", [])
+
+                    # If email was drafted, add send_email action
+                    if email_draft and email_draft.get("status") == "drafted":
+                        actions.append({"type": "send_email", "label": "Send Email"})
+
+                    done_data = {
+                        "actions": actions,
+                        "conversation_id": request.conversation_id,
+                    }
+                    if email_draft:
+                        done_data["email_draft"] = email_draft
+                    if completeness:
+                        done_data["completeness"] = completeness
+
+                    yield f"event: done\ndata: {json.dumps(done_data)}\n\n"
+
+            # Save AI response to database
+            ai_metadata: Dict[str, Any] = {"actions": actions}
+            if email_draft:
+                ai_metadata["email_draft"] = email_draft
+
+            ai_message = MessageCreate(
+                conversation_id=request.conversation_id,
+                message_type=MessageType.AI_RESPONSE,
+                role=MessageRole.ASSISTANT,
+                content=full_response,
+                metadata=ai_metadata,
+            )
+            self.message_dao.create_message(ai_message)
+
+        except Exception as e:
+            logger.exception("Error in streaming chat")
+            error_data = {"error": str(e)}
+            yield f"event: error\ndata: {json.dumps(error_data)}\n\n"

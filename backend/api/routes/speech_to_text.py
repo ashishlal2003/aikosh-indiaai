@@ -14,6 +14,7 @@ speech_to_text_controller = SpeechToTextController()
 async def transcribe_chat(
     file: UploadFile = File(..., description="Audio file to transcribe"),
     conversation_id: str = Form(..., description="Conversation ID for the chat session"),
+    language: str = Form(None, description="Language hint: en (English), hi (Hindi), kn (Kannada)"),
 ) -> VoiceMessageResponse:
     """
     Transcribe an audio file for chat and save to messages table.
@@ -21,8 +22,9 @@ async def transcribe_chat(
     Args:
         file: Audio file (supported formats: WAV, MP3, WEBM, MPEG, MP4, M4A)
         conversation_id: Conversation ID to associate the voice message with
+        language: Optional language hint (en, hi, kn) to improve transcription accuracy
 
     Returns:
         VoiceMessageResponse containing the transcribed text and message record
     """
-    return speech_to_text_controller.transcribe_for_chat(file, conversation_id)
+    return speech_to_text_controller.transcribe_for_chat(file, conversation_id, language)

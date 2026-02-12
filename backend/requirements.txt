@@ -4,7 +4,7 @@ python-multipart==0.0.22
 supabase==2.27.2
 python-dotenv==1.2.1
 pydantic==2.12.5
-groq==1.0.0
+openai==1.59.4
 sentence-transformers==5.2.2
 faiss-cpu==1.13.2
 pypdf==6.6.2

@@ -12,6 +12,7 @@ from api.models.document import (
     DisputeDocumentResponse,
     DocumentCompleteness,
     DocumentType,
+    VerificationStatus,
     REQUIRED_DOCUMENT_TYPES,
 )
 from api.daos.conversation_dao import ConversationDAO
@@ -182,9 +183,45 @@ class DocumentDAO:
         except Exception as e:
             raise Exception(f"Database error while updating document: {str(e)}")
 
+    def verify_document_by_type(
+        self,
+        conversation_id: str,
+        document_type: str,
+        verified: bool = True,
+        notes: str = "",
+    ) -> Optional[DisputeDocumentResponse]:
+        """
+        Find the most recent document of given type and update its verification status.
+
+        Args:
+            conversation_id: Conversation identifier
+            document_type: DocumentType value string (e.g. "invoice")
+            verified: True to verify, False to reject
+            notes: Optional officer notes
+
+        Returns:
+            Updated DisputeDocumentResponse if found
+        """
+        try:
+            docs = self.get_documents_by_type(conversation_id, document_type)
+            if not docs:
+                return None
+
+            latest_doc = sorted(docs, key=lambda d: d.created_at, reverse=True)[0]
+            status = VerificationStatus.VERIFIED if verified else VerificationStatus.REJECTED
+            update = DisputeDocumentUpdate(
+                verification_status=status,
+                officer_notes=notes or None,
+            )
+            return self.update_document(latest_doc.id, update)
+
+        except Exception as e:
+            raise Exception(f"Error verifying document by type: {str(e)}")
+
     def get_completeness(self, conversation_id: str) -> DocumentCompleteness:
         """
         Check document completeness for a conversation.
+        Completeness % is based on verified documents only.
 
         Args:
             conversation_id: The conversation_id or UUID
@@ -195,27 +232,37 @@ class DocumentDAO:
         try:
             documents = self.get_documents_by_conversation(conversation_id)
 
-            # Track uploaded types
-            uploaded_types = set()
+            # Track best status per doc type (verified > pending > rejected)
+            status_priority = {"verified": 3, "needs_clarification": 2, "pending": 1, "rejected": 0}
+            type_to_status: dict = {}
             status_summary = {"pending": 0, "verified": 0, "rejected": 0, "needs_clarification": 0}
+            uploaded_types = set()
             verified_count = 0
 
             for doc in documents:
-                uploaded_types.add(doc.document_type)
+                dt = doc.document_type
                 status = doc.verification_status
+                uploaded_types.add(dt)
                 if status in status_summary:
                     status_summary[status] += 1
                 if status == "verified":
                     verified_count += 1
+                # Keep the best status per type
+                if dt not in type_to_status or status_priority.get(status, 0) > status_priority.get(type_to_status[dt], 0):
+                    type_to_status[dt] = status
 
-            # Check against required types
+            # Build per-document status for all 5 required types
             required_type_values = [dt.value for dt in REQUIRED_DOCUMENT_TYPES]
+            per_document = {req: type_to_status.get(req, "missing") for req in required_type_values}
+
             missing_types = [t for t in required_type_values if t not in uploaded_types]
             uploaded_list = [t for t in uploaded_types if t in required_type_values]
 
             total_required = len(required_type_values)
             uploaded_count = len(uploaded_list)
-            completeness_pct = (uploaded_count / total_required * 100) if total_required > 0 else 0
+            # Percentage based on verified required docs only
+            verified_required = sum(1 for t in required_type_values if type_to_status.get(t) == "verified")
+            completeness_pct = (verified_required / total_required * 100) if total_required > 0 else 0
 
             return DocumentCompleteness(
                 conversation_id=conversation_id,
@@ -226,6 +273,7 @@ class DocumentDAO:
                 missing_types=missing_types,
                 verified_count=verified_count,
                 status_summary=status_summary,
+                per_document=per_document,
             )
 
         except Exception as e:
